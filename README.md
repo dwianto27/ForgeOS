@@ -1,255 +1,248 @@
-**ForgeOS** adalah aplikasi manajemen proyek yang membantu pengguna menyusun proyek, memecah tujuan menjadi tugas, melacak progres pekerjaan, dan memanfaatkan AI untuk membantu perencanaan.
+# ForgeOS
 
-> Status: pengembangan aktif. Dokumentasi ini merangkum fitur dan konfigurasi yang telah dikonfirmasi selama pengembangan; beberapa bagian dapat berubah seiring perkembangan aplikasi.
+ForgeOS is an AI-powered project management application designed to help users organize projects, break down goals into actionable tasks, track progress, and plan their work with AI assistance.
 
-## Daftar Isi
+> **Status:** Active development. Features, database structures, and configuration requirements may change as the project evolves.
 
-- [Fitur](#fitur)
-- [Teknologi](#teknologi)
-- [Struktur Data](#struktur-data)
-- [Persyaratan](#persyaratan)
-- [Menjalankan Secara Lokal](#menjalankan-secara-lokal)
-- [Konfigurasi Environment](#konfigurasi-environment)
-- [Menghubungkan Provider AI](#menghubungkan-provider-ai)
-- [Database dan Migrasi Supabase](#database-dan-migrasi-supabase)
-- [Keamanan](#keamanan)
-- [Pemecahan Masalah](#pemecahan-masalah)
-- [Rencana Pengembangan](#rencana-pengembangan)
+## Table of Contents
 
-## Fitur
+- [Features](#features)
+- [Technology Stack](#technology-stack)
+- [Requirements](#requirements)
+- [Getting Started](#getting-started)
+- [Environment Variables](#environment-variables)
+- [Database Setup](#database-setup)
+- [AI Provider Configuration](#ai-provider-configuration)
+- [Security](#security)
+- [Available Scripts](#available-scripts)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
 
-Fitur yang telah dibangun atau sedang diintegrasikan:
+## Features
 
-- **Manajemen proyek** — membuat dan mengelola proyek milik pengguna.
-- **Manajemen tugas** — tugas terkait proyek, deskripsi, prioritas, dan hari pengerjaan.
-- **Pelacakan status tugas** — `todo`, `in_progress`, dan `done`.
-- **Perencanaan berbantuan AI** — mengirim tujuan proyek ke provider AI untuk membantu menyusun rencana.
-- **Konfigurasi provider AI** — mengatur nama provider, endpoint, model, dan API key melalui aplikasi.
-- **Penyimpanan API key terenkripsi** — API key provider disimpan sebagai ciphertext menggunakan AES-256-GCM di sisi server.
-- **Autentikasi dan isolasi data** — data proyek, tugas, dan konfigurasi AI dibatasi berdasarkan pengguna melalui Supabase Row Level Security (RLS).
+- **Project Management** — Create and manage projects associated with your account.
+- **Task Management** — Organize tasks with descriptions, priorities, and scheduled days.
+- **Kanban Board** — Track task progress through `todo`, `in_progress`, and `done` statuses.
+- **AI Task Breakdown** — Use a compatible AI provider to help break project goals into actionable tasks.
+- **Custom AI Providers** — Configure provider names, API endpoints, model IDs, and API keys.
+- **Encrypted API Key Storage** — Protect stored AI provider API keys using server-side AES-256-GCM encryption.
+- **Authentication and Data Isolation** — Use Supabase authentication and Row Level Security (RLS) to restrict access to user-owned data.
+- **AI Rate Limiting** — Use Upstash Redis to help limit AI requests.
 
-Dukungan model dan endpoint AI bergantung pada kompatibilitas provider dengan format API yang digunakan aplikasi. NVIDIA NIM dapat digunakan sebagai contoh provider apabila endpoint, model, dan kredensial yang sesuai telah dikonfigurasi.
+AI functionality depends on the selected provider, model availability, valid credentials, and compatible API endpoints.
 
-## Teknologi
+## Technology Stack
 
-Teknologi yang telah teridentifikasi dalam proyek:
+| Technology      | Purpose                                               |
+| --------------- | ----------------------------------------------------- |
+| Next.js         | Web application framework                             |
+| React           | User interface                                        |
+| TypeScript      | Type safety                                           |
+| Tailwind CSS    | Styling                                               |
+| Supabase        | Authentication and PostgreSQL database                |
+| `@supabase/ssr` | Supabase integration for server-rendered applications |
+| Upstash Redis   | AI request rate limiting                              |
+| Node.js Crypto  | Server-side encryption                                |
+| Lucide React    | Icons                                                 |
+| Vitest          | Automated testing                                     |
 
-- [Next.js](https://nextjs.org/) — framework aplikasi web.
-- [React](https://react.dev/) dan [TypeScript](https://www.typescriptlang.org/) — antarmuka dan pemeriksaan tipe.
-- [Supabase](https://supabase.com/) — autentikasi dan PostgreSQL.
-- [`@supabase/ssr`](https://www.npmjs.com/package/@supabase/ssr) — integrasi Supabase pada aplikasi Next.js.
-- Node.js Crypto — enkripsi API key AI di sisi server.
-- Provider AI yang kompatibel dengan endpoint aplikasi.
+Package versions are defined in `package.json` and the repository's lockfile.
 
-Versi paket yang tepat mengikuti `package.json` dan lockfile di repositori.
+## Requirements
 
-## Struktur Data
+Before getting started, make sure you have:
 
-Database utama menggunakan tiga tabel di schema `public`.
+- A compatible Node.js LTS version.
+- npm.
+- A Supabase account and project.
+- An Upstash Redis database.
+- AI provider credentials if you want to use AI features.
 
-### `projects`
+## Getting Started
 
-Menyimpan proyek milik pengguna.
+### 1. Clone the repository
 
-| Kolom         | Keterangan                                 |
-| ------------- | ------------------------------------------ |
-| `id`          | ID proyek                                  |
-| `name`        | Nama proyek                                |
-| `description` | Deskripsi proyek                           |
-| `color`       | Warna penanda proyek                       |
-| `created_at`  | Waktu pembuatan                            |
-| `updated_at`  | Waktu pembaruan                            |
-| `user_id`     | Pemilik proyek, merujuk ke `auth.users.id` |
+```bash
+git clone https://github.com/dwianto27/ForgeOS.git
+cd ForgeOS
+```
 
-### `tasks`
+### 2. Install dependencies
 
-Menyimpan tugas yang terhubung dengan proyek.
+```bash
+npm install
+```
 
-| Kolom          | Keterangan                         |
-| -------------- | ---------------------------------- |
-| `id`           | ID tugas                           |
-| `project_id`   | Proyek induk                       |
-| `title`        | Judul tugas                        |
-| `description`  | Deskripsi tugas                    |
-| `is_completed` | Penanda selesai                    |
-| `status`       | `todo`, `in_progress`, atau `done` |
-| `priority`     | `low`, `medium`, atau `high`       |
-| `day`          | Hari pengerjaan                    |
-| `created_at`   | Waktu pembuatan                    |
+### 3. Configure environment variables
 
-### `ai_provider_settings`
+Create a `.env.local` file in the project root and configure the variables listed in [Environment Variables](#environment-variables).
 
-Menyimpan konfigurasi provider AI per pengguna.
+Never commit `.env.local` or share its secret values.
 
-| Kolom               | Keterangan                                         |
-| ------------------- | -------------------------------------------------- |
-| `id`                | ID konfigurasi                                     |
-| `user_id`           | Pemilik konfigurasi; satu konfigurasi per pengguna |
-| `provider_name`     | Nama provider                                      |
-| `base_url`          | Endpoint API                                       |
-| `model`             | ID/nama model                                      |
-| `encrypted_api_key` | API key dalam bentuk terenkripsi                   |
-| `created_at`        | Waktu pembuatan                                    |
-| `updated_at`        | Waktu pembaruan                                    |
+### 4. Set up Supabase
 
-Ketiga tabel menggunakan Row Level Security (RLS). Kebijakan tabel proyek dan konfigurasi AI membatasi akses ke data pengguna yang sedang masuk. Kebijakan tugas memeriksa kepemilikan proyek induknya.
+Create or select a Supabase project. Apply the database schema from `supabase/schema.sql` using the Supabase Dashboard SQL Editor after the file has been added to the repository.
 
-## Persyaratan
+Do not run the schema against a database that already contains these objects without first reviewing the SQL and backing up the database.
 
-Pastikan perangkat pengembangan memiliki:
+### 5. Start the development server
 
-- Node.js versi LTS yang kompatibel dengan versi Next.js pada proyek.
-- npm (atau package manager yang sesuai dengan lockfile).
-- Akun dan proyek Supabase.
-- Kredensial provider AI jika ingin mencoba fitur AI.
+```bash
+npm run dev
+```
 
-## Menjalankan Secara Lokal
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-1. Clone repositori atau buka direktori proyek.
-2. Buka terminal di direktori `ForgeOS`.
-3. Pasang dependensi sesuai lockfile:
+## Environment Variables
 
-   ```bash
-   npm install
-   ```
-
-4. Buat file `.env.local` di direktori utama proyek dan isi variabel yang diperlukan. Lihat [Konfigurasi Environment](#konfigurasi-environment).
-5. Pastikan schema database dan kebijakan RLS sudah diterapkan pada proyek Supabase yang digunakan.
-6. Jalankan server pengembangan:
-
-   ```bash
-   npm run dev
-   ```
-
-7. Buka `http://localhost:3000` di browser.
-
-Perintah tambahan seperti `npm run build`, `npm run lint`, atau `npm run typecheck` hanya tersedia jika didefinisikan di `package.json`.
-
-## Konfigurasi Environment
-
-Nama variabel yang telah dikonfirmasi digunakan pada proyek:
+Create a `.env.local` file with the following variables:
 
 ```dotenv
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+
 AI_SETTINGS_ENCRYPTION_KEY=
+
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
 ```
 
-- `NEXT_PUBLIC_SUPABASE_URL`: URL proyek Supabase.
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: publishable key untuk mengakses Supabase dari aplikasi.
-- `AI_SETTINGS_ENCRYPTION_KEY`: kunci enkripsi server untuk melindungi API key provider AI yang tersimpan.
+| Variable                               | Description                                                 |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`             | URL of your Supabase project.                               |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key used by the application.           |
+| `AI_SETTINGS_ENCRYPTION_KEY`           | Server-side encryption key for stored AI provider API keys. |
+| `UPSTASH_REDIS_REST_URL`               | Upstash Redis REST endpoint.                                |
+| `UPSTASH_REDIS_REST_TOKEN`             | Authentication token for Upstash Redis.                     |
 
-Periksa file helper Supabase server dan route API di kode sumber untuk memastikan apakah ada variabel server tambahan yang diperlukan pada versi proyek saat ini.
+Keep all secret values private. Variables prefixed with `NEXT_PUBLIC_` may be exposed to the browser and must never contain server-only secrets.
 
-### Membuat kunci enkripsi
+### Generate the encryption key
 
-ForgeOS menggunakan AES-256-GCM. Jika implementasi saat ini meminta kunci dalam format 64 karakter heksadesimal, kunci dapat dibuat secara lokal menggunakan Node.js:
+ForgeOS uses AES-256-GCM to encrypt stored AI provider API keys. Generate a 32-byte key represented as 64 hexadecimal characters with Node.js:
 
 ```bash
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Simpan hasilnya sebagai `AI_SETTINGS_ENCRYPTION_KEY` di `.env.local`. Jangan membagikan nilai kunci tersebut atau memasukkannya ke repositori.
+Set the generated value as `AI_SETTINGS_ENCRYPTION_KEY`.
 
-**Penting:** jika data konfigurasi AI terenkripsi akan dipindahkan ke lingkungan baru, kunci enkripsi yang sama harus dipertahankan agar ciphertext lama dapat didekripsi. Jika database baru dimulai tanpa data lama, kunci baru dapat dibuat.
+**Important:** Preserve the same encryption key when moving a database containing previously encrypted AI settings. Changing the key may prevent existing encrypted values from being decrypted.
 
-## Menghubungkan Provider AI
+## Database Setup
 
-ForgeOS menyediakan halaman pengaturan provider AI. Alur umumnya:
+ForgeOS uses Supabase PostgreSQL with three primary tables.
 
-1. Buka halaman pengaturan AI di aplikasi.
-2. Masukkan nama provider.
-3. Masukkan endpoint API yang kompatibel.
-4. Masukkan ID model yang benar-benar tersedia pada provider.
-5. Masukkan API key provider.
-6. Simpan pengaturan dan coba fitur perencanaan AI.
+| Table                  | Purpose                                                             |
+| ---------------------- | ------------------------------------------------------------------- |
+| `projects`             | Stores user-owned projects.                                         |
+| `tasks`                | Stores tasks associated with projects.                              |
+| `ai_provider_settings` | Stores each user's AI provider configuration and encrypted API key. |
 
-### Contoh: NVIDIA NIM
+The database uses Row Level Security (RLS) policies to restrict access to user-owned records. Task access is checked against ownership of the associated project.
 
-[NVIDIA NIM](https://build.nvidia.com/) dapat dijadikan contoh untuk panduan konfigurasi provider. Model, akses gratis, kuota, dan ketersediaannya dapat berubah. Periksa halaman model NVIDIA yang dipilih untuk mengetahui endpoint, autentikasi, model ID, dan batas penggunaan terkini.
+### Schema file
 
-Jangan mengasumsikan semua model NVIDIA NIM gratis atau selalu tersedia. Gunakan endpoint dan model ID persis seperti yang disediakan provider.
-
-Jangan pernah menaruh API key provider pada kode frontend, commit Git, log, issue publik, atau dokumentasi. Masukkan key hanya melalui mekanisme konfigurasi yang disediakan aplikasi.
-
-## Database dan Migrasi Supabase
-
-Schema awal disimpan pada file migrasi:
+The database schema will be maintained at:
 
 ```text
-supabase/migrations/20261018000000_initial_schema.sql
+supabase/schema.sql
 ```
 
-Migrasi tersebut mendefinisikan tabel `projects`, `tasks`, `ai_provider_settings`, indeks, constraint, RLS, dan kebijakan akses. File ini ditujukan untuk **proyek Supabase baru** dan bukan untuk dijalankan ulang pada database yang sudah memiliki tabel-tabel tersebut.
+This file is intended to document the database structure, including tables, constraints, indexes, and RLS policies.
 
-Untuk menyiapkan proyek Supabase baru:
+Once the file has been committed to GitHub, it can be used to set up a compatible database through the Supabase Dashboard SQL Editor:
 
-1. Buat proyek baru di [Supabase Dashboard](https://supabase.com/dashboard).
-2. Buka **SQL Editor** pada proyek baru.
-3. Jalankan isi file migrasi awal satu kali.
-4. Verifikasi ketiga tabel, constraint, indeks, RLS, dan kebijakannya.
-5. Perbarui konfigurasi lokal agar menunjuk ke proyek baru.
-6. Jalankan ForgeOS dan uji daftar/masuk pengguna, proyek, tugas, serta pengaturan AI.
+1. Create a Supabase project.
+2. Open the project's SQL Editor.
+3. Review `supabase/schema.sql`.
+4. Execute the SQL against the intended database.
+5. Verify that the tables, constraints, indexes, and RLS policies were created successfully.
+6. Configure the application environment variables.
 
-Proyek Supabase baru tidak otomatis memiliki akun pengguna dari proyek lama. Pengguna perlu mendaftar atau masuk melalui sistem autentikasi proyek baru, kecuali migrasi pengguna dilakukan secara terpisah dan direncanakan dengan hati-hati.
+**Note:** The schema file must exist in the repository before it can be used from GitHub. Creating the schema does not migrate existing user accounts or application data.
 
-### Catatan migrasi data
+Back up an existing database before making structural changes. Review the SQL before running it, particularly when the database already contains tables or policies.
 
-File migrasi awal hanya membuat struktur database; file tersebut tidak memindahkan data proyek, tugas, pengguna, atau pengaturan AI dari proyek lama. Sebelum migrasi produksi, buat backup dan susun prosedur migrasi data yang sesuai.
+## AI Provider Configuration
 
-## Keamanan
+ForgeOS supports configurable AI providers through the application's AI settings page.
 
-- Jangan commit `.env.local` atau file yang berisi rahasia.
-- Pastikan `.env.local` tercakup dalam `.gitignore`.
-- Jangan pernah mengekspos Supabase service-role key di browser atau variabel berawalan `NEXT_PUBLIC_`.
-- Gunakan publishable key untuk penggunaan client yang dilindungi RLS.
-- Pertahankan RLS dan uji akses dengan lebih dari satu akun pengguna.
-- API key provider AI harus ditangani di server dan disimpan terenkripsi.
-- Lindungi `AI_SETTINGS_ENCRYPTION_KEY` seperti password penting. Kehilangan kunci dapat membuat data terenkripsi lama tidak dapat dipulihkan.
-- Jangan mengirim isi `.env.local`, token, password, atau API key ke issue, chat publik, maupun repositori.
+General setup:
 
-## Pemecahan Masalah
+1. Sign in to ForgeOS.
+2. Open the AI settings page.
+3. Enter the provider name.
+4. Configure the API endpoint.
+5. Enter a model ID supported by the provider.
+6. Enter the provider API key.
+7. Save the configuration and test the AI functionality.
 
-### Konfigurasi Supabase belum lengkap
+Provider compatibility depends on the API format implemented by ForgeOS.
 
-Pastikan `NEXT_PUBLIC_SUPABASE_URL` dan `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` sudah terisi pada `.env.local`. Setelah mengubah environment variable, mulai ulang server pengembangan.
+### Example: NVIDIA NIM
 
-### Tabel atau kolom tidak ditemukan
+[NVIDIA NIM](https://build.nvidia.com/) is one possible provider to configure, provided the selected model and endpoint are compatible with the application.
 
-Pastikan migrasi diterapkan pada proyek Supabase yang benar dan nama kolom di database cocok dengan kode aplikasi.
+Check the provider's current documentation for the correct endpoint, model ID, authentication requirements, and usage limits. Model availability and pricing may change.
 
-### Pengguna tidak dapat melihat proyek atau tugas
+Never hardcode provider API keys into frontend code or commit them to Git.
 
-Periksa sesi autentikasi, kepemilikan `user_id`, relasi `tasks.project_id`, dan kebijakan RLS. Jangan menonaktifkan RLS sebagai solusi permanen.
+## Security
 
-### Provider AI menolak permintaan
+Follow these practices when developing and deploying ForgeOS:
 
-Periksa endpoint, model ID, API key, kuota, rate limit, dan format request yang didukung provider. Jika provider sedang sibuk atau membatasi permintaan, coba lagi nanti atau gunakan model lain yang tersedia.
+- Never commit `.env.local`, API keys, passwords, or access tokens.
+- Keep `AI_SETTINGS_ENCRYPTION_KEY` private and securely backed up.
+- Keep Supabase service-role credentials on the server; never expose them through browser code or `NEXT_PUBLIC_` variables.
+- Use Supabase RLS to enforce user-level data access.
+- Test data isolation with multiple user accounts.
+- Keep AI provider API keys encrypted at rest using the application's server-side encryption mechanism.
+- Keep Upstash Redis credentials private.
+- Review and test database policies before deploying changes to production.
 
-### API key AI gagal didekripsi
+Security depends on the application's implementation, environment configuration, database policies, and deployment practices.
 
-Pastikan `AI_SETTINGS_ENCRYPTION_KEY` sama dengan kunci yang digunakan saat data tersebut dienkripsi. Jangan membuat kunci baru jika masih perlu membaca ciphertext lama.
+## Available Scripts
 
-## Rencana Pengembangan
+Run the following commands from the project root:
 
-Area pengembangan berikut dapat dijadikan panduan; ini bukan klaim bahwa seluruh item telah selesai:
+| Command         | Purpose                               |
+| --------------- | ------------------------------------- |
+| `npm run dev`   | Start the development server.         |
+| `npm run build` | Build the application for production. |
+| `npm run start` | Start the production server.          |
+| `npm run lint`  | Run the configured lint checks.       |
+| `npm test`      | Run the test suite.                   |
 
-- Menyelesaikan dan menguji alur migrasi Supabase.
-- Menyediakan panduan provider AI yang jelas, termasuk contoh NVIDIA NIM.
-- Menambah validasi dan pesan error yang mudah dipahami pada integrasi AI.
-- Menguji isolasi data antar pengguna dan kebijakan RLS.
-- Menyusun pengujian otomatis untuk alur proyek, tugas, dan pengaturan AI.
-- Menyempurnakan dokumentasi instalasi, deployment, backup, dan pemulihan.
+Run scripts from the repository's `package.json`. Additional commands should only be used if they are defined in the project configuration.
 
-## Status Proyek
+## Troubleshooting
 
-ForgeOS masih dalam pengembangan aktif. Gunakan README ini sebagai dokumentasi awal dan perbarui saat fitur, struktur database, atau konfigurasi berubah.
+### Supabase configuration errors
 
-- `UPSTASH_REDIS_REST_URL`: URL REST database Redis Upstash.
-- `UPSTASH_REDIS_REST_TOKEN`: token autentikasi Redis Upstash.
+Verify that `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are configured correctly. Restart the development server after changing environment variables.
 
-Keduanya digunakan oleh `Redis.fromEnv()` di `lib/ai-rate-limit.ts`
-untuk menginisialisasi Redis yang mendukung rate limiting permintaan AI.
+### Missing tables or columns
 
-Simpan kedua nilai sebagai rahasia. Jangan memasukkannya ke repositori
-atau membagikannya kepada pihak lain.
+Verify that the schema has been applied to the intended Supabase project and that the database structure matches the application's queries.
+
+### Projects or tasks are not visible
+
+Check the authentication session, project ownership, task relationships, and RLS policies. Do not disable RLS as a permanent workaround.
+
+### AI provider requests fail
+
+Check the endpoint, model ID, API key, provider availability, usage limits, and request format.
+
+### AI API key decryption fails
+
+Verify that `AI_SETTINGS_ENCRYPTION_KEY` matches the key used when the data was encrypted. Do not replace the key if existing encrypted settings still need to be recovered.
+
+### AI rate limiting errors
+
+Verify the Upstash Redis REST URL and token. Also check the configured rate-limit policy and the availability of the Redis service.
+
+## License
+
+No license has been specified for this project yet. Until a license is added, permission to use, modify, or redistribute this software should not be assumed.
