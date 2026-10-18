@@ -1,8 +1,3 @@
-import pypandoc
-from pathlib import Path
-
-markdown = r"""# ForgeOS
-
 **ForgeOS** adalah aplikasi manajemen proyek yang membantu pengguna menyusun proyek, memecah tujuan menjadi tugas, melacak progres pekerjaan, dan memanfaatkan AI untuk membantu perencanaan.
 
 > Status: pengembangan aktif. Dokumentasi ini merangkum fitur dan konfigurasi yang telah dikonfirmasi selama pengembangan; beberapa bagian dapat berubah seiring perkembangan aplikasi.
