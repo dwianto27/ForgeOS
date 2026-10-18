@@ -244,11 +244,6 @@ Area pengembangan berikut dapat dijadikan panduan; ini bukan klaim bahwa seluruh
 ## Status Proyek
 
 ForgeOS masih dalam pengembangan aktif. Gunakan README ini sebagai dokumentasi awal dan perbarui saat fitur, struktur database, atau konfigurasi berubah.
-"""
-
-output_path = Path("/mnt/data/README.md")
-pypandoc.convert_text(markdown, "md", format="md", outputfile=str(output_path), extra_args=["--standalone"])
-print(f"README dibuat: {output_path} ({output_path.stat().st_size} bytes)")
 
 - `UPSTASH_REDIS_REST_URL`: URL REST database Redis Upstash.
 - `UPSTASH_REDIS_REST_TOKEN`: token autentikasi Redis Upstash.
