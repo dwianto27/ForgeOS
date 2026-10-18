@@ -1,6 +1,18 @@
 
 "use client";
 
+import {
+    LayoutDashboard,
+    FolderKanban,
+    ListChecks,
+    Bot,
+    CircleHelp,
+    Pencil,
+    Trash2,
+    ListTodo,
+    X,
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { useEffect, useState } from "react";
 import {
     DndContext,
@@ -26,6 +38,11 @@ type Task = {
     status: "todo" | "in_progress" | "done";
 };
 
+type BreakdownTask = {
+    title: string;
+    description: string;
+    priority: "low" | "medium" | "high";
+};
 
 type Project = {
     id: number;
@@ -57,7 +74,9 @@ export default function Home() {
     const [dbError, setDbError] = useState("");
     const [newProject, setNewProject] = useState("");
     const [notice, setNotice] = useState("");
-    const [newTaskTitle, setNewTaskTitle] = useState("");
+    const [newTaskTitles, setNewTaskTitles] = useState<
+        Record<number, string>
+    >({});
     const [selectedProjectId, setSelectedProjectId] = useState("");
     const [isSavingProject, setIsSavingProject] = useState(false);
     const [isSavingTask, setIsSavingTask] = useState(false);
@@ -70,7 +89,31 @@ export default function Home() {
     const [aiError, setAiError] = useState("");
     const [isSavingPlan, setIsSavingPlan] = useState(false);
     const [savePlanError, setSavePlanError] = useState("");
+    const [copilotProjectId, setCopilotProjectId] = useState<number | null>(null);
+    const [copilotQuestion, setCopilotQuestion] = useState("");
+    const [breakdownProjectId, setBreakdownProjectId] =
+        useState<number | null>(null);
+
+    const [breakdownGoal, setBreakdownGoal] = useState("");
+    const [breakdownTasks, setBreakdownTasks] =
+        useState<BreakdownTask[]>([]);
+    const [breakdownSelected, setBreakdownSelected] =
+        useState<number[]>([]);
+    const [breakdownError, setBreakdownError] = useState("");
+    const [isBreakdownLoading, setIsBreakdownLoading] = useState(false);
+    const [isBreakdownSaving, setIsBreakdownSaving] = useState(false);
+    const [copilotAnswer, setCopilotAnswer] = useState("");
+    const [copilotError, setCopilotError] = useState("");
+    const [isCopilotLoading, setIsCopilotLoading] = useState(false);
     const [deletingProjectId, setDeletingProjectId] = useState<number | null>(null);
+    const [projectToDelete, setProjectToDelete] =
+        useState<Project | null>(null);
+    const [taskToDelete, setTaskToDelete] = useState<{
+        projectId: number;
+        taskId: number;
+        title: string;
+        projectName: string;
+    } | null>(null);
     const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
     const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
     const [editingTaskProjectId, setEditingTaskProjectId] = useState<number | null>(null);
@@ -231,6 +274,239 @@ export default function Home() {
             active = false;
         };
     }, [router]);
+
+
+    async function askProjectCopilot(projectId: number) {
+        const question = copilotQuestion.trim();
+
+        if (!question || isCopilotLoading) {
+            return;
+        }
+
+        setCopilotProjectId(projectId);
+        setCopilotAnswer("");
+        setCopilotError("");
+        setIsCopilotLoading(true);
+
+        try {
+            const response = await fetch("/api/ai/copilot", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    projectId,
+                    question,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    typeof data.error === "string"
+                        ? data.error
+                        : "Gagal mendapatkan jawaban dari AI Copilot."
+                );
+            }
+
+            if (typeof data.result !== "string") {
+                throw new Error("Format jawaban AI tidak valid.");
+            }
+
+            setCopilotAnswer(data.result);
+        } catch (error) {
+            setCopilotError(
+                error instanceof Error
+                    ? error.message
+                    : "Terjadi kesalahan saat menghubungi AI Copilot."
+            );
+        } finally {
+            setIsCopilotLoading(false);
+        }
+    }
+
+
+    async function generateTaskBreakdown() {
+        if (breakdownProjectId === null) {
+            setBreakdownError("Pilih proyek terlebih dahulu.");
+            return;
+        }
+
+        const goal = breakdownGoal.trim();
+
+        if (!goal) {
+            setBreakdownError("Masukkan tujuan yang ingin dipecah menjadi tugas.");
+            return;
+        }
+
+        setIsBreakdownLoading(true);
+        setBreakdownError("");
+        setBreakdownTasks([]);
+        setBreakdownSelected([]);
+
+        try {
+            const response = await fetch("/api/ai/breakdown", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    projectId: breakdownProjectId,
+                    goal,
+                }),
+            });
+
+            const data: unknown = await response.json();
+
+            if (!response.ok) {
+                const message =
+                    typeof data === "object" &&
+                        data !== null &&
+                        "error" in data &&
+                        typeof data.error === "string"
+                        ? data.error
+                        : "Gagal membuat daftar tugas.";
+
+                throw new Error(message);
+            }
+
+            if (
+                typeof data !== "object" ||
+                data === null ||
+                !("tasks" in data) ||
+                !Array.isArray(data.tasks)
+            ) {
+                throw new Error("Respons AI tidak memiliki daftar tugas yang valid.");
+            }
+
+            const validTasks = data.tasks.filter(
+                (task): task is BreakdownTask =>
+                    typeof task === "object" &&
+                    task !== null &&
+                    "title" in task &&
+                    typeof task.title === "string" &&
+                    "description" in task &&
+                    typeof task.description === "string" &&
+                    "priority" in task &&
+                    (task.priority === "low" ||
+                        task.priority === "medium" ||
+                        task.priority === "high")
+            );
+
+            if (validTasks.length === 0) {
+                throw new Error("AI tidak menghasilkan tugas yang valid.");
+            }
+
+            setBreakdownTasks(validTasks);
+            setBreakdownSelected(validTasks.map((_, index) => index));
+        } catch (error) {
+            setBreakdownError(
+                error instanceof Error
+                    ? error.message
+                    : "Terjadi kesalahan saat membuat daftar tugas."
+            );
+        } finally {
+            setIsBreakdownLoading(false);
+        }
+    }
+
+
+    async function saveBreakdownTasks() {
+        if (breakdownProjectId === null) {
+            setBreakdownError("Pilih proyek terlebih dahulu.");
+            return;
+        }
+
+        const selectedTasks = breakdownSelected
+            .map((index) => breakdownTasks[index])
+            .filter((task): task is BreakdownTask => Boolean(task));
+
+        if (selectedTasks.length === 0) {
+            setBreakdownError("Pilih minimal satu tugas untuk disimpan.");
+            return;
+        }
+
+        setIsBreakdownSaving(true);
+        setBreakdownError("");
+
+        try {
+            const supabase = createClient();
+
+            const { data: claimsData, error: claimsError } =
+                await supabase.auth.getClaims();
+
+            const userId = claimsData?.claims?.sub;
+
+            if (claimsError || typeof userId !== "string" || !userId) {
+                throw new Error("Sesi login tidak valid. Silakan login kembali.");
+            }
+
+            const { data: savedTasks, error } = await supabase
+                .from("tasks")
+                .insert(
+                    selectedTasks.map((task) => ({
+                        project_id: breakdownProjectId,
+                        title: task.title,
+                        description: task.description,
+                        priority: task.priority,
+                        day: 1,
+                        is_completed: false,
+                        status: "todo",
+                    }))
+                )
+                .select(
+                    "id, project_id, title, description, priority, day, is_completed, status"
+                );
+
+            if (error) {
+                console.error("Gagal menyimpan tugas AI:", error);
+                throw new Error("Gagal menyimpan tugas. Silakan coba lagi.");
+            }
+
+            const newTasks = (savedTasks ?? []).map((task) => ({
+                id: Number(task.id),
+                title: task.title,
+                description: task.description ?? "",
+                priority:
+                    task.priority === "low" || task.priority === "high"
+                        ? task.priority
+                        : "medium" as const,
+                day: Number(task.day ?? 1),
+                done: Boolean(task.is_completed),
+                status:
+                    task.status === "in_progress" || task.status === "done"
+                        ? task.status
+                        : "todo" as const,
+            }));
+
+            setProjects((current) =>
+                current.map((project) =>
+                    project.id === breakdownProjectId
+                        ? {
+                            ...project,
+                            tasks: [...project.tasks, ...newTasks],
+                        }
+                        : project
+                )
+            );
+
+            setNotice(`${newTasks.length} tugas berhasil ditambahkan ke proyek.`);
+            setBreakdownTasks([]);
+            setBreakdownSelected([]);
+            setBreakdownGoal("");
+        } catch (error) {
+            setBreakdownError(
+                error instanceof Error
+                    ? error.message
+                    : "Terjadi kesalahan saat menyimpan tugas."
+            );
+        } finally {
+            setIsBreakdownSaving(false);
+        }
+    }
+
+
 
     useEffect(() => {
         if (!authChecked) return;
@@ -936,12 +1212,6 @@ Ketentuan:
             return false;
         }
 
-        const confirmed = window.confirm(
-            `Yakin ingin menghapus tugas "${task.title}"? Tindakan ini tidak dapat dibatalkan.`
-        );
-
-        if (!confirmed) return false;
-
         setDeletingTaskId(taskId);
         setNotice("");
 
@@ -1164,12 +1434,6 @@ Ketentuan:
             return false;
         }
 
-        const confirmed = window.confirm(
-            `Yakin ingin menghapus proyek "${project.name}" beserta semua tugasnya? Tindakan ini tidak dapat dibatalkan.`
-        );
-
-        if (!confirmed) return false;
-
         setDeletingProjectId(projectId);
         setNotice("");
 
@@ -1306,40 +1570,50 @@ Ketentuan:
                         PERSONAL WORKSPACE
                     </p>
 
+
                     <nav className="mt-10 space-y-2">
                         <a
                             href="#dashboard"
-                            className="block rounded-xl bg-violet-500/15 px-4 py-3 font-medium text-violet-300"
+                            className="flex items-center gap-3 rounded-xl bg-violet-500/15 px-4 py-3 font-medium text-violet-300"
                         >
-                            ◈ Dashboard
+                            <LayoutDashboard size={20} strokeWidth={1.8} />
+                            <span>Dashboard</span>
                         </a>
+
                         <a
                             href="#projects"
-                            className="block rounded-xl px-4 py-3 text-slate-400 transition hover:bg-white/5 hover:text-white"
+                            className="flex items-center gap-3 rounded-xl px-4 py-3 text-slate-400 transition hover:bg-white/5 hover:text-white"
                         >
-                            ▦ Proyek
+                            <FolderKanban size={20} strokeWidth={1.8} />
+                            <span>Proyek</span>
                         </a>
+
                         <a
                             href="#tasks"
-                            className="block rounded-xl px-4 py-3 text-slate-400 transition hover:bg-white/5 hover:text-white"
+                            className="flex items-center gap-3 rounded-xl px-4 py-3 text-slate-400 transition hover:bg-white/5 hover:text-white"
                         >
-                            ☑ Tugas
+                            <ListChecks size={20} strokeWidth={1.8} />
+                            <span>Tugas</span>
                         </a>
+
                         <a
                             href="/settings/ai"
-                            className="block rounded-xl px-4 py-3 text-slate-400 transition hover:bg-white/5 hover:text-white"
+                            className="flex items-center gap-3 rounded-xl px-4 py-3 text-slate-400 transition hover:bg-white/5 hover:text-white"
                         >
-                            ⚙ Pengaturan AI
+                            <Bot size={20} strokeWidth={1.8} />
+                            <span>Pengaturan AI</span>
                         </a>
+
                         <a
                             href="/help"
                             onClick={() => setMobileMenuOpen(false)}
                             className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white"
                         >
-                            <span aria-hidden="true">?</span>
-                            Bantuan
+                            <CircleHelp size={20} strokeWidth={1.8} />
+                            <span>Bantuan</span>
                         </a>
                     </nav>
+
 
                     <div className="mt-auto rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                         <p className="text-sm font-semibold">Satu langkah setiap hari.</p>
@@ -2017,8 +2291,9 @@ Ketentuan:
                                                                         setEditProjectDescription(project.description);
                                                                         setNotice("");
                                                                     }}
-                                                                    className="mt-3 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-violet-300 transition hover:border-violet-400/30 hover:bg-violet-400/10"
+                                                                    className="mt-3 inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-violet-300 transition hover:border-violet-400/30 hover:bg-violet-400/10"
                                                                 >
+                                                                    <Pencil size={14} />
                                                                     Edit Proyek
                                                                 </button>
 
@@ -2028,13 +2303,60 @@ Ketentuan:
                                                                         deletingProjectId !== null ||
                                                                         editingProjectId === project.id
                                                                     }
-                                                                    onClick={() => deleteProject(project.id)}
-                                                                    className="mt-3 ml-2 rounded-lg border border-red-400/20 px-3 py-1.5 text-xs font-medium text-red-300 transition hover:border-red-400/40 hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    onClick={() => setProjectToDelete(project)}
+                                                                    className="mt-3 ml-2 inline-flex items-center gap-2 rounded-lg border border-red-400/20 px-3 py-1.5 text-xs font-medium text-red-300 transition hover:border-red-400/40 hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-50"
                                                                 >
+                                                                    <Trash2 size={14} />
                                                                     {deletingProjectId === project.id
                                                                         ? "Menghapus..."
                                                                         : "Hapus Proyek"}
                                                                 </button>
+
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setCopilotProjectId(
+                                                                            copilotProjectId === project.id ? null : project.id
+                                                                        );
+                                                                        setCopilotQuestion("");
+                                                                        setCopilotAnswer("");
+                                                                        setCopilotError("");
+                                                                    }}
+                                                                    className="mt-3 ml-2 inline-flex items-center gap-2 rounded-lg border border-violet-400/30 px-3 py-1.5 text-xs font-medium text-violet-300 transition hover:bg-violet-400/10"
+                                                                >
+                                                                    {copilotProjectId === project.id ? (
+                                                                        <X size={14} />
+                                                                    ) : (
+                                                                        <Bot size={14} />
+                                                                    )}
+                                                                    {copilotProjectId === project.id
+                                                                        ? "Tutup AI Copilot"
+                                                                        : "AI Copilot"}
+                                                                </button>
+
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setBreakdownProjectId(
+                                                                            breakdownProjectId === project.id ? null : project.id
+                                                                        );
+                                                                        setBreakdownGoal("");
+                                                                        setBreakdownTasks([]);
+                                                                        setBreakdownSelected([]);
+                                                                        setBreakdownError("");
+                                                                    }}
+                                                                    className="mt-3 ml-2 inline-flex items-center gap-2 rounded-lg border border-emerald-400/30 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-400/10"
+                                                                >
+                                                                    {breakdownProjectId === project.id ? (
+                                                                        <X size={14} />
+                                                                    ) : (
+                                                                        <ListTodo size={14} />
+                                                                    )}
+                                                                    {breakdownProjectId === project.id
+                                                                        ? "Tutup Task Breakdown"
+                                                                        : "AI Task Breakdown"}
+                                                                </button>
+
 
                                                             </>
                                                         )}
@@ -2057,22 +2379,336 @@ Ketentuan:
                                                     {done} dari {project.tasks.length} tugas selesai
                                                 </p>
 
+                                                {copilotProjectId === project.id && (
+                                                    <div className="mt-5 rounded-2xl border border-violet-400/20 bg-violet-500/5 p-4">
+                                                        <div className="mb-3">
+                                                            <h4 className="font-semibold text-white">
+                                                                ForgeOS AI Copilot
+                                                            </h4>
+                                                            <p className="mt-1 text-sm text-slate-400">
+                                                                Tanyakan sesuatu tentang proyek ini dan AI akan menganalisis
+                                                                tugas serta progresnya.
+                                                            </p>
+                                                        </div>
+
+                                                        <form
+                                                            className="space-y-3"
+                                                            onSubmit={async (event) => {
+                                                                event.preventDefault();
+                                                                await askProjectCopilot(project.id);
+                                                            }}
+                                                        >
+                                                            <textarea
+                                                                value={copilotQuestion}
+                                                                onChange={(event) =>
+                                                                    setCopilotQuestion(event.target.value)
+                                                                }
+                                                                placeholder="Contoh: Apa yang harus saya prioritaskan selanjutnya?"
+                                                                onKeyDown={(event) => {
+                                                                    if (
+                                                                        event.key === "Enter" &&
+                                                                        !event.shiftKey &&
+                                                                        !event.nativeEvent.isComposing
+                                                                    ) {
+                                                                        event.preventDefault();
+                                                                        event.currentTarget.form?.requestSubmit();
+                                                                    }
+                                                                }}
+                                                                aria-label={`Pertanyaan AI Copilot untuk ${project.name}`}
+                                                                rows={3}
+                                                                maxLength={500}
+                                                                required
+                                                                disabled={isCopilotLoading}
+                                                                className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-sm text-white placeholder:text-slate-500 disabled:opacity-50"
+                                                            />
+
+                                                            <button
+                                                                type="submit"
+                                                                disabled={
+                                                                    isCopilotLoading || !copilotQuestion.trim()
+                                                                }
+                                                                className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                            >
+
+                                                                {isCopilotLoading ? (
+                                                                    <span className="inline-flex items-center gap-2">
+                                                                        <svg
+                                                                            className="h-4 w-4 animate-spin"
+                                                                            xmlns="http://www.w3.org/2000/svg"
+                                                                            fill="none"
+                                                                            viewBox="0 0 24 24"
+                                                                            aria-hidden="true"
+                                                                        >
+                                                                            <circle
+                                                                                className="opacity-25"
+                                                                                cx="12"
+                                                                                cy="12"
+                                                                                r="10"
+                                                                                stroke="currentColor"
+                                                                                strokeWidth="4"
+                                                                            />
+                                                                            <path
+                                                                                className="opacity-75"
+                                                                                fill="currentColor"
+                                                                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                                                            />
+                                                                        </svg>
+                                                                        AI sedang menganalisis...
+                                                                    </span>
+                                                                ) : (
+                                                                    "Tanya AI Copilot"
+                                                                )}
+
+                                                            </button>
+                                                        </form>
+
+                                                        {copilotError && (
+                                                            <div
+                                                                role="alert"
+                                                                className="mt-4 rounded-xl border border-red-400/20 bg-red-400/5 p-3 text-sm text-red-300"
+                                                            >
+                                                                {copilotError}
+                                                            </div>
+                                                        )}
+
+                                                        {copilotAnswer && (
+                                                            <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/70 p-4">
+                                                                <h5 className="mb-2 text-sm font-semibold text-violet-300">
+                                                                    Analisis AI
+                                                                </h5>
+
+                                                                <div className="break-words text-sm leading-7 text-slate-200 [&_h1]:mb-3 [&_h1]:mt-5 [&_h1]:text-xl [&_h1]:font-bold [&_h1]:text-white [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:text-white [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-base [&_h3]:font-bold [&_h3]:text-violet-300 [&_p]:mb-3 [&_strong]:font-bold [&_strong]:text-white [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_li]:pl-1 [&_hr]:my-4 [&_hr]:border-white/10 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-violet-400 [&_blockquote]:pl-3 [&_blockquote]:text-slate-400 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-violet-200">
+                                                                    <ReactMarkdown>{copilotAnswer}</ReactMarkdown>
+                                                                </div>
+
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+
+                                                {breakdownProjectId === project.id && (
+                                                    <div className="mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-4">
+                                                        <div className="mb-4">
+                                                            <h4 className="font-semibold text-white">
+                                                                ForgeOS AI Task Breakdown
+                                                            </h4>
+                                                            <p className="mt-1 text-sm text-slate-400">
+                                                                Ubah tujuan besar menjadi tugas-tugas konkret yang
+                                                                bisa langsung ditambahkan ke proyek ini.
+                                                            </p>
+                                                        </div>
+
+                                                        <form
+                                                            className="space-y-3"
+                                                            onSubmit={async (event) => {
+                                                                event.preventDefault();
+                                                                await generateTaskBreakdown();
+                                                            }}
+                                                        >
+                                                            <textarea
+                                                                value={breakdownGoal}
+                                                                onChange={(event) =>
+                                                                    setBreakdownGoal(event.target.value)
+                                                                }
+                                                                placeholder="Contoh: Membangun website toko online dari awal hingga siap diluncurkan."
+                                                                rows={3}
+                                                                maxLength={500}
+                                                                required
+                                                                disabled={isBreakdownLoading || isBreakdownSaving}
+                                                                onKeyDown={(event) => {
+                                                                    if (
+                                                                        event.key === "Enter" &&
+                                                                        !event.shiftKey &&
+                                                                        !event.nativeEvent.isComposing
+                                                                    ) {
+                                                                        event.preventDefault();
+                                                                        event.currentTarget.form?.requestSubmit();
+                                                                    }
+                                                                }}
+                                                                aria-label={`Tujuan Task Breakdown untuk ${project.name}`}
+                                                                className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-sm text-white placeholder:text-slate-500 disabled:opacity-50"
+                                                            />
+
+                                                            <button
+                                                                type="submit"
+                                                                disabled={
+                                                                    isBreakdownLoading ||
+                                                                    isBreakdownSaving ||
+                                                                    !breakdownGoal.trim()
+                                                                }
+                                                                className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                            >
+                                                                {isBreakdownLoading
+                                                                    ? "AI sedang menyusun tugas..."
+                                                                    : "Buat Daftar Tugas"}
+                                                            </button>
+                                                        </form>
+
+                                                        {isBreakdownLoading && (
+                                                            <div
+                                                                role="status"
+                                                                className="mt-4 flex items-center gap-3 rounded-xl border border-emerald-400/20 bg-slate-950/50 p-3 text-sm text-slate-300"
+                                                            >
+                                                                <svg
+                                                                    className="h-5 w-5 animate-spin text-emerald-400"
+                                                                    xmlns="http://www.w3.org/2000/svg"
+                                                                    fill="none"
+                                                                    viewBox="0 0 24 24"
+                                                                    aria-hidden="true"
+                                                                >
+                                                                    <circle
+                                                                        className="opacity-25"
+                                                                        cx="12"
+                                                                        cy="12"
+                                                                        r="10"
+                                                                        stroke="currentColor"
+                                                                        strokeWidth="4"
+                                                                    />
+                                                                    <path
+                                                                        className="opacity-75"
+                                                                        fill="currentColor"
+                                                                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                                                    />
+                                                                </svg>
+                                                                AI sedang menganalisis tujuan dan menyusun langkah kerja.
+                                                            </div>
+                                                        )}
+
+                                                        {breakdownError && (
+                                                            <div
+                                                                role="alert"
+                                                                className="mt-4 rounded-xl border border-red-400/20 bg-red-400/5 p-3 text-sm text-red-300"
+                                                            >
+                                                                {breakdownError}
+                                                            </div>
+                                                        )}
+
+                                                        {breakdownTasks.length > 0 && (
+                                                            <div className="mt-5 space-y-3">
+                                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                                    <h5 className="font-semibold text-emerald-300">
+                                                                        Tinjau Tugas Hasil AI
+                                                                    </h5>
+
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() =>
+                                                                            setBreakdownSelected(
+                                                                                breakdownSelected.length === breakdownTasks.length
+                                                                                    ? []
+                                                                                    : breakdownTasks.map((_, index) => index)
+                                                                            )
+                                                                        }
+                                                                        disabled={isBreakdownSaving}
+                                                                        className="text-xs text-emerald-300 hover:text-emerald-200"
+                                                                    >
+                                                                        {breakdownSelected.length === breakdownTasks.length
+                                                                            ? "Batalkan Semua"
+                                                                            : "Pilih Semua"}
+                                                                    </button>
+                                                                </div>
+
+                                                                <div className="space-y-2">
+                                                                    {breakdownTasks.map((task, index) => (
+                                                                        <label
+                                                                            key={`${index}-${task.title}`}
+                                                                            className="flex cursor-pointer gap-3 rounded-xl border border-white/10 bg-slate-950/60 p-3 transition hover:border-emerald-400/30"
+                                                                        >
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={breakdownSelected.includes(index)}
+                                                                                disabled={isBreakdownSaving}
+                                                                                onChange={(event) =>
+                                                                                    setBreakdownSelected((current) =>
+                                                                                        event.target.checked
+                                                                                            ? [...current, index]
+                                                                                            : current.filter(
+                                                                                                (item) => item !== index
+                                                                                            )
+                                                                                    )
+                                                                                }
+                                                                                className="mt-1 h-4 w-4 shrink-0 accent-emerald-500"
+                                                                            />
+
+                                                                            <div className="min-w-0 flex-1">
+                                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                                    <span className="text-sm font-medium text-white">
+                                                                                        {task.title}
+                                                                                    </span>
+
+                                                                                    <span
+                                                                                        className={`rounded-full px-2 py-0.5 text-xs ${task.priority === "high"
+                                                                                            ? "bg-red-400/10 text-red-300"
+                                                                                            : task.priority === "low"
+                                                                                                ? "bg-slate-400/10 text-slate-300"
+                                                                                                : "bg-amber-400/10 text-amber-300"
+                                                                                            }`}
+                                                                                    >
+                                                                                        {task.priority === "high"
+                                                                                            ? "Tinggi"
+                                                                                            : task.priority === "low"
+                                                                                                ? "Rendah"
+                                                                                                : "Sedang"}
+                                                                                    </span>
+                                                                                </div>
+
+                                                                                {task.description && (
+                                                                                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-400">
+                                                                                        {task.description}
+                                                                                    </p>
+                                                                                )}
+                                                                            </div>
+                                                                        </label>
+                                                                    ))}
+                                                                </div>
+
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={saveBreakdownTasks}
+                                                                    disabled={
+                                                                        isBreakdownSaving ||
+                                                                        breakdownSelected.length === 0
+                                                                    }
+                                                                    className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                >
+                                                                    {isBreakdownSaving
+                                                                        ? "Menyimpan tugas..."
+                                                                        : `Simpan ${breakdownSelected.length} Tugas Terpilih`}
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+
                                                 <form
                                                     className="mt-4 flex flex-col gap-2 sm:flex-row"
                                                     onSubmit={async (event) => {
                                                         event.preventDefault();
 
-                                                        const saved = await addTask(project.id, newTaskTitle);
+                                                        const saved = await addTask(
+                                                            project.id,
+                                                            newTaskTitles[project.id] ?? ""
+                                                        );
 
                                                         if (saved) {
-                                                            setNewTaskTitle("");
+                                                            setNewTaskTitles((current) => ({
+                                                                ...current,
+                                                                [project.id]: "",
+                                                            }));
                                                         }
                                                     }}
                                                 >
                                                     <input
                                                         type="text"
-                                                        value={newTaskTitle}
-                                                        onChange={(event) => setNewTaskTitle(event.target.value)}
+                                                        value={newTaskTitles[project.id] ?? ""}
+                                                        onChange={(event) =>
+                                                            setNewTaskTitles((current) => ({
+                                                                ...current,
+                                                                [project.id]: event.target.value,
+                                                            }))
+                                                        }
                                                         placeholder="Nama tugas baru..."
                                                         aria-label={`Nama tugas untuk ${project.name}`}
                                                         maxLength={200}
@@ -2083,7 +2719,10 @@ Ketentuan:
 
                                                     <button
                                                         type="submit"
-                                                        disabled={isSavingTask || !newTaskTitle.trim()}
+                                                        disabled={
+                                                            isSavingTask ||
+                                                            !(newTaskTitles[project.id] ?? "").trim()
+                                                        }
                                                         className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                                                     >
                                                         {isSavingTask ? "Menyimpan..." : "+ Tambah Tugas"}
@@ -2254,7 +2893,12 @@ Ketentuan:
                                                                     type="button"
                                                                     disabled={deletingTaskId !== null}
                                                                     onClick={() =>
-                                                                        deleteTask(task.project.id, task.id)
+                                                                        setTaskToDelete({
+                                                                            projectId: task.project.id,
+                                                                            taskId: task.id,
+                                                                            title: task.title,
+                                                                            projectName: task.project.name,
+                                                                        })
                                                                     }
                                                                     className="mt-3 rounded-lg border border-red-400/20 px-3 py-2 text-xs text-red-300 transition hover:bg-red-400/10 disabled:opacity-50"
                                                                 >
@@ -2422,10 +3066,196 @@ Ketentuan:
                         ForgeOS · Dibangun selangkah demi selangkah.
                     </footer>
                 </section>
+
+                {projectToDelete && (
+                    <div
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+                        onClick={() => {
+                            if (deletingProjectId === null) {
+                                setProjectToDelete(null);
+                            }
+                        }}
+                    >
+                        <div
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="delete-project-title"
+                            className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <div className="flex flex-col items-center text-center">
+                                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10 text-red-400">
+                                    <Trash2 size={26} />
+                                </div>
+
+                                <h2
+                                    id="delete-project-title"
+                                    className="mt-4 text-xl font-semibold text-white"
+                                >
+                                    Hapus proyek?
+                                </h2>
+
+                                <p className="mt-2 text-sm leading-6 text-slate-400">
+                                    Kamu yakin ingin menghapus proyek ini beserta semua
+                                    tugasnya? Tindakan ini tidak dapat dibatalkan.
+                                </p>
+
+                                <div className="mt-5 w-full rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left">
+                                    <p className="text-xs text-slate-500">
+                                        PROYEK YANG AKAN DIHAPUS
+                                    </p>
+                                    <p className="mt-1 break-words font-medium text-white">
+                                        {projectToDelete.name}
+                                    </p>
+                                </div>
+
+                                <div className="mt-6 flex w-full gap-3">
+                                    <button
+                                        type="button"
+                                        disabled={deletingProjectId !== null}
+                                        onClick={() => setProjectToDelete(null)}
+                                        className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 disabled:opacity-50"
+                                    >
+                                        Batal
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        disabled={deletingProjectId !== null}
+                                        onClick={async () => {
+                                            const projectId = projectToDelete.id;
+                                            const deleted = await deleteProject(projectId);
+
+                                            if (deleted) {
+                                                setProjectToDelete(null);
+                                            }
+                                        }}
+                                        className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        {deletingProjectId === projectToDelete.id ? (
+                                            <>
+                                                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                                Menghapus...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Trash2 size={16} />
+                                                Hapus Proyek
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                )}
+
+                {/* Modal konfirmasi hapus tugas */}
+                {taskToDelete && (
+                    <div
+                        className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+                        onClick={() => {
+                            if (deletingTaskId === null) {
+                                setTaskToDelete(null);
+                            }
+                        }}
+                    >
+                        <div
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="delete-task-title"
+                            className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <div className="flex flex-col items-center text-center">
+                                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10 text-red-400">
+                                    <Trash2 size={26} />
+                                </div>
+
+                                <h2
+                                    id="delete-task-title"
+                                    className="mt-4 text-xl font-semibold text-white"
+                                >
+                                    Hapus tugas?
+                                </h2>
+
+                                <p className="mt-2 text-sm leading-6 text-slate-400">
+                                    Kamu yakin ingin menghapus tugas ini?
+                                    Tindakan ini tidak dapat dibatalkan.
+                                </p>
+
+                                <div className="mt-5 w-full space-y-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left">
+                                    <div>
+                                        <p className="text-xs text-slate-500">
+                                            TUGAS YANG AKAN DIHAPUS
+                                        </p>
+                                        <p className="mt-1 break-words font-medium text-white">
+                                            {taskToDelete.title}
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <p className="text-xs text-slate-500">
+                                            PROYEK
+                                        </p>
+                                        <p className="mt-1 break-words text-sm text-slate-300">
+                                            {taskToDelete.projectName}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-6 flex w-full gap-3">
+                                    <button
+                                        type="button"
+                                        disabled={deletingTaskId !== null}
+                                        onClick={() => setTaskToDelete(null)}
+                                        className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 disabled:opacity-50"
+                                    >
+                                        Batal
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        disabled={deletingTaskId !== null}
+                                        onClick={async () => {
+                                            const { projectId, taskId } = taskToDelete;
+
+                                            const deleted = await deleteTask(
+                                                projectId,
+                                                taskId
+                                            );
+
+                                            if (deleted) {
+                                                setTaskToDelete(null);
+                                            }
+                                        }}
+                                        className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        {deletingTaskId === taskToDelete.taskId ? (
+                                            <>
+                                                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                                Menghapus...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Trash2 size={16} />
+                                                Hapus Tugas
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
             </div>
+
         </main>
     );
 }
+
 
 
 function DraggableTaskCard({
@@ -2435,27 +3265,52 @@ function DraggableTaskCard({
     id: string;
     children: React.ReactNode;
 }) {
+    const [isDesktop, setIsDesktop] = useState(false);
+
+    useEffect(() => {
+        const mediaQuery = window.matchMedia("(min-width: 768px)");
+
+        const updateScreenSize = () => {
+            setIsDesktop(mediaQuery.matches);
+        };
+
+        updateScreenSize();
+        mediaQuery.addEventListener("change", updateScreenSize);
+
+        return () => {
+            mediaQuery.removeEventListener("change", updateScreenSize);
+        };
+    }, []);
+
     const {
         attributes,
         listeners,
         setNodeRef,
         transform,
         isDragging,
-    } = useDraggable({ id });
+    } = useDraggable({
+        id,
+        disabled: !isDesktop,
+    });
 
     return (
         <div
             ref={setNodeRef}
             style={{
-                transform: transform
-                    ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
-                    : undefined,
+                transform:
+                    transform && isDesktop
+                        ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
+                        : undefined,
                 opacity: isDragging ? 0.4 : 1,
-                touchAction: "none",
+                touchAction: isDesktop ? undefined : "auto",
             }}
-            {...listeners}
             {...attributes}
-            className="cursor-grab active:cursor-grabbing"
+            {...(isDesktop ? listeners : {})}
+            className={
+                isDesktop
+                    ? "cursor-grab active:cursor-grabbing"
+                    : "cursor-default"
+            }
         >
             {children}
         </div>
